@@ -1,45 +1,61 @@
-perform_cluster_analysis_standalone <- function(procedure_name = NULL, op_zugang_filter = NULL, seite_filter = NULL, details_filter = NULL, ein_mehr_filter = NULL, data) {
-  # Filter the data based on the provided filters
-  filtered_data <- data %>%
+perform_cluster_analysis_standalone <- function(procedure_name = NULL, 
+                                                op_zugang_filter = NULL, 
+                                                seite_filter = NULL, 
+                                                details_filter = NULL, 
+                                                ein_mehr_filter = NULL, 
+                                                data) {
+  
+  # Daten filtern basierend auf den bereitgestellten Filtern
+  gefilterte_daten <- data %>%
     filter(if (!is.null(procedure_name)) eingrbez_2 == procedure_name else TRUE) %>%
     filter(if (length(op_zugang_filter) > 0) op_zugang %in% op_zugang_filter else TRUE) %>%
     filter(if (length(seite_filter) > 0) Seite %in% seite_filter else TRUE) %>%
     filter(if (length(details_filter) > 0) details %in% details_filter else TRUE) |>
     filter(if (length(ein_mehr_filter) > 0) ein_mehr %in% ein_mehr_filter else TRUE)
   
+  # Initialisierung der Variablen für spätere Nutzung
   scree_plot <- NULL
   swarm_plot <- NULL
   cluster_stats <- tibble()
   optimal_k <- NA
   
-  if (nrow(filtered_data) > 0) {
-    set.seed(123)
+  # Überprüfung, ob gefilterte Daten vorhanden sind
+  if (nrow(gefilterte_daten) > 0) {
+    set.seed(123)  # Setzen des Zufallszahlengenerators für Reproduzierbarkeit
     
-    unique_data_points <- length(unique(filtered_data$schnitt_naht_minuten))
+    # Anzahl der einzigartigen Werte in der Variable "schnitt_naht_minuten"
+    unique_data_points <- length(unique(gefilterte_daten$schnitt_naht_minuten))
     
+    # Wenn es zu wenige einzigartige Datenpunkte gibt, setze alle Daten in einen Cluster
     if (unique_data_points <= 5) {
-      filtered_data$cluster <- rep(1, nrow(filtered_data))
+      gefilterte_daten$cluster <- rep(1, nrow(gefilterte_daten))
       optimal_k <- 1
     } else {
+      # Bestimmen der maximalen Anzahl von Clustern basierend auf den Daten
       max_k <- min(unique_data_points - 1, 10)
+      
+      # Berechnen der Summe der quadratischen Abweichungen innerhalb der Cluster für verschiedene Werte von k
       wss <- sapply(1:max_k, function(k) {
-        tryCatch(kmeans(filtered_data$schnitt_naht_minuten, k, nstart = 10)$tot.withinss, error = function(e) NA)
+        tryCatch(kmeans(gefilterte_daten$schnitt_naht_minuten, k, nstart = 10)$tot.withinss, error = function(e) NA)
       })
+      
+      # Entfernen ungültiger WSS-Werte
       valid_wss <- na.omit(wss)
       
+      # Wenn mehr als ein gültiger WSS-Wert vorhanden ist, bestimme das optimale k mittels Elbow-Methode
       if (length(valid_wss) > 1) {
         optimal_k <- findElbowPoint(valid_wss)
-        kmeans_result <- kmeans(filtered_data$schnitt_naht_minuten, centers = optimal_k, nstart = 10)
-        filtered_data$cluster <- kmeans_result$cluster
+        kmeans_result <- kmeans(gefilterte_daten$schnitt_naht_minuten, centers = optimal_k, nstart = 10)
+        gefilterte_daten$cluster <- kmeans_result$cluster
       } else {
-        # If valid WSS calculations do not allow for an elbow point determination
-        filtered_data$cluster <- rep(1, nrow(filtered_data))
+        # Wenn keine Elbow-Methode angewendet werden kann, setze alle Daten in einen Cluster
+        gefilterte_daten$cluster <- rep(1, nrow(gefilterte_daten))
         optimal_k <- 1
       }
     }
     
-    # Generate cluster statistics
-    cluster_stats1 <- filtered_data %>%
+    # Generierung von Cluster-Statistiken
+    cluster_stats1 <- gefilterte_daten %>%
       group_by(cluster) %>%
       summarise(
         Anzahl = n(),
@@ -55,10 +71,10 @@ perform_cluster_analysis_standalone <- function(procedure_name = NULL, op_zugang
         xmax = as.numeric(cluster) + 0.3
       )
     
-    # Calculate weighted mean for the 'Alle' group
+    # Berechnung des gewichteten Mittels für die "Alle"-Gruppe
     weighted_mean <- sum(cluster_stats1$Mean * cluster_stats1$Anzahl) / sum(cluster_stats1$Anzahl)
     
-    # Combine cluster statistics into a single dataframe
+    # Zusammenführen der Cluster-Statistiken in einem einzigen Dataframe
     total_stats <- tibble(
       cluster = "Alle",
       Anzahl = sum(cluster_stats1$Anzahl),
@@ -85,17 +101,17 @@ perform_cluster_analysis_standalone <- function(procedure_name = NULL, op_zugang
         .default = NA)
     )
     
+    # Zusammenführen der Cluster-Statistiken und Hinzufügen der "Alle"-Gruppe
     cluster_stats <- bind_rows(cluster_stats1, total_stats) %>% 
       mutate(across(-cluster, ~round(., 1))) |> 
-      #rename Mean to Cluster Mean
       rename(`Cluster Mean` = Mean, `Cluster Median`= Median)
     
-    # Create swarm plot
+    # Erstellung eines Schwarmplots
     swarm_plot <- ggplot() +
-      geom_quasirandom(data = filtered_data, aes(x = factor(cluster), y = schnitt_naht_minuten, color = factor(cluster)), 
-                       size = ifelse(nrow(filtered_data) < 200, 3, 1.5), show.legend = FALSE) +
-      geom_quasirandom(data = filtered_data, aes(x = factor("Alle"), y = schnitt_naht_minuten), color = "purple", alpha = 0.5, 
-                       size = ifelse(nrow(filtered_data) < 200, 3, 1.5)) +
+      geom_quasirandom(data = gefilterte_daten, aes(x = factor(cluster), y = schnitt_naht_minuten, color = factor(cluster)), 
+                       size = ifelse(nrow(gefilterte_daten) < 200, 3, 1.5), show.legend = FALSE) +
+      geom_quasirandom(data = gefilterte_daten, aes(x = factor("Alle"), y = schnitt_naht_minuten), color = "purple", alpha = 0.5, 
+                       size = ifelse(nrow(gefilterte_daten) < 200, 3, 1.5)) +
       geom_segment(data = cluster_stats1, aes(x = xmin, xend = xmax, y = Mean, yend = Mean, linetype = "Mean"), 
                    color = "grey40", linewidth = 1.5) +
       geom_segment(data = cluster_stats1, aes(x = xmin, xend = xmax, y = Median, yend = Median, linetype = "Median"), 
@@ -111,10 +127,12 @@ perform_cluster_analysis_standalone <- function(procedure_name = NULL, op_zugang
                    color = "grey40", linewidth = 2.5) +
       scale_color_manual(values = c("1" = "steelblue", "2" = "gold", "3" = "firebrick", "Alle" = "purple")) +
       scale_linetype_manual(values = c("Mean" = "solid", "Median" = "dotted", "Weighted Mean" = "dotdash"))+
-      labs(title = paste(procedure_name, op_zugang_filter,  seite_filter, details_filter), x = "Cluster", y = "Schnitt-Naht [Minuten]", linetype = "") +
+      labs(title = paste(procedure_name, op_zugang_filter,  seite_filter, details_filter), 
+           x = "Cluster", y = "Schnitt-Naht [Minuten]", linetype = "") +
       theme_minimal() +
       tar_ggplot_font_size(7) 
     
+    # Erstellung eines Scree-Plots, um die optimale Clusteranzahl zu bestimmen
     scree_plot <- if (optimal_k > 1) {
       ggplot(data.frame(k = 1:length(valid_wss), wss = valid_wss), aes(x = k, y = wss)) +
         geom_line(linewidth = 2, color = "grey") + 
@@ -135,7 +153,7 @@ perform_cluster_analysis_standalone <- function(procedure_name = NULL, op_zugang
     }
   }
   
-  # Return the updated filtered data with cluster assignments, along with the other results
+  # Rückgabe der aktualisierten gefilterten Daten mit Cluster-Zuordnungen und anderen Ergebnissen
   return(list(
     data = cluster_stats,
     swarm_plot = swarm_plot,
